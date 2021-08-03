@@ -28,7 +28,7 @@ from django.utils import timezone
 
 from django.core.exceptions import PermissionDenied
 # from ddosdb.enrichment.team_cymru import TeamCymru
-from ddosdb.models import Query, AccessRequest, Blame, FileUpload, RemoteDdosDb, FailedLogin
+from ddosdb.models import Query, AccessRequest, Blame, FileUpload, RemoteDdosDb, FailedLogin, Fingerprint
 
 from ddosdb.database import Database
 
@@ -305,10 +305,16 @@ def details(request):
         start = time.time()
 
         try:
-            results = _search({'key': key}, {'_id': 0})
-            context["results"] = results
+            # results = _search({'key': key}, {'_id': 0})
+            # context["results"] = results
+            fp = SqlFingerprint.objects.get(key=key)
+            pp.pprint(fp.fingerprint)
+            context["results"] = [fp.fingerprint]
         except Exception as e:
             context["error"] = "Invalid query: " + str(e)
+            fp = Fingerprint.objects.get(key=key)
+            pp.pprint(fp.fingerprint)
+            context["results"] = [fp.fingerprint]
 
         context["time"] = time.time() - start
 
@@ -535,17 +541,26 @@ def upload_file(request):
 
             logger.info("Fingerprint {}: {}".format(data["key"], data))
 
-            _cleanup_fp(data)
-            # JSON database insert
-            try:
-                _delete({'key': data['key']})
-                _insert(data)
-            except ServerSelectionTimeoutError:
-                logger.error("ServerSelectionTimeoutError: could not reach MongoDB")
-                response = HttpResponse()
-                response.status_code = 500
-                response.reason_phrase = "Error reaching MongoDB"
-                return response
+            # Try a different insert now as well
+
+            # sql_fp = SqlFingerprint(key= data['key'], fingerprint= {"test": True, "src_ip": ["127.0.0.1", "192.168.0.7"], "submit timestap": datetime.utcnow().isoformat()})
+            sql_fp = Fingerprint(key= data['key'], fingerprint= data)
+            # sql_fp.key = data['key']
+            # sql_fp.fingerprint = data
+            sql_fp.save()
+
+
+            # _cleanup_fp(data)
+            # # JSON database insert
+            # try:
+            #     _delete({'key': data['key']})
+            #     _insert(data)
+            # except ServerSelectionTimeoutError:
+            #     logger.error("ServerSelectionTimeoutError: could not reach MongoDB")
+            #     response = HttpResponse()
+            #     response.status_code = 500
+            #     response.reason_phrase = "Error reaching MongoDB"
+            #     return response
 
         if "pcap" in request.FILES:
             logger.info("pcap in request as well")
@@ -610,7 +625,7 @@ def overview(request):
     if "son" in request.GET:
         context["son"] = request.GET["son"]
 
-    logger.debug("context: {}".format(context))
+    # logger.debug("context: {}".format(context))
     #    _search()
 
     try:
@@ -635,23 +650,38 @@ def overview(request):
         }
 
         # Only retrieve the fields that we display
-        fields = dict.fromkeys(list(context["headers"].keys()), 1)
+        # fields = dict.fromkeys(list(context["headers"].keys()), 1)
+        #
+        # q = "*"
+        # query = {}
+        # if (context["q"]):
+        #     q = context["q"]
+        # q_dis = q.split(':')
+        # if q_dis[0] == 'submitter':
+        #     query = {"submitter": q_dis[1]}
+        # mdb_resp = _search(query=query, fields=fields)
+        # #        pp.pprint(mdb_resp)
+        #
+        # context["time"] = time.time() - start
+        # logger.debug("Search took {} seconds".format(context["time"]))
+        # #        results = [x["_source"] for x in response["hits"]["hits"]]
+        # results1 = mdb_resp
+        # logger.info("Got {} results".format(len(results1)))
 
-        q = "*"
-        query = {}
-        if (context["q"]):
-            q = context["q"]
-        q_dis = q.split(':')
-        if q_dis[0] == 'submitter':
-            query = {"submitter": q_dis[1]}
-        mdb_resp = _search(query=query, fields=fields)
-        #        pp.pprint(mdb_resp)
+        start = time.time()
+        tmp_fps = Fingerprint.objects.all()
+        results = []
+        for tmp_fp in tmp_fps:
+            result = {}
+            for hdr in context["headers"].keys():
+                result[hdr] = tmp_fp.fingerprint[hdr]
+            results.append(result)
 
         context["time"] = time.time() - start
+        # pp.pprint(results)
+
+
         logger.debug("Search took {} seconds".format(context["time"]))
-        #        results = [x["_source"] for x in response["hits"]["hits"]]
-        results = mdb_resp
-        logger.info("Got {} results".format(len(results)))
 
         #        pp.pprint(results)
         # Only do this if there are actual results...
@@ -938,12 +968,21 @@ def toggle_shareable(request):
         shareable = not strtobool(request.GET["shareable"])
 
     try:
-        fp = _search_one({"key": key}, {"shareable": 1, "key": 1, "submitter": 1})
-        if fp["submitter"] == user.username or user.is_superuser:
+        fp = Fingerprint.objects.get(key=key)
+        if fp.fingerprint["submitter"] == user.username or user.is_superuser:
             logger.info("Setting key {} to Shareable={}".format(key, shareable))
-            _update({'key': key}, {'$set': {"shareable": shareable}})
+            fp.fingerprint["shareable"] = shareable
+            fp.save()
+            # _update({'key': key}, {'$set': {"shareable": shareable}})
         else:
             raise PermissionDenied()
+
+        # fp = _search_one({"key": key}, {"shareable": 1, "key": 1, "submitter": 1})
+        # if fp["submitter"] == user.username or user.is_superuser:
+        #     logger.info("Setting key {} to Shareable={}".format(key, shareable))
+        #     _update({'key': key}, {'$set': {"shareable": shareable}})
+        # else:
+        #     raise PermissionDenied()
     except Exception as e:
         logger.error(e)
         response = HttpResponse()

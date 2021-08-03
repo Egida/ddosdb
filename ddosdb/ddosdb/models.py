@@ -2,6 +2,7 @@ from django.contrib.auth.models import User
 from django.core.mail import send_mail
 from django.db import models
 from django.db.models.signals import post_save
+from django.db.models import JSONField
 from django.dispatch import receiver
 
 from website import settings
@@ -36,11 +37,15 @@ class Blame(models.Model):
 
 class Fingerprint(models.Model):
     class Meta:
-        managed = False
-
         permissions = (
             ('upload_fingerprint', 'Can upload fingerprints'),
         )
+
+    key = models.CharField(max_length=64, primary_key=True)
+    fingerprint = JSONField()
+
+    def __str__(self):
+        return self.key
 
 
 class FileUpload(models.Model):
